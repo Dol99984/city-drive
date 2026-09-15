@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>City Drive — Open City Demo</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden;background:#111;color:#fff;font-family:Arial,sans-serif}
+canvas{display:block;width:100vw;height:100vh;background:#222}
+#hud{position:fixed;top:14px;left:14px;z-index:3;display:flex;gap:10px;flex-wrap:wrap}
+.card{background:rgba(0,0,0,.72);border:1px solid rgba(255,255,255,.18);border-radius:10px;padding:9px 12px;backdrop-filter:blur(5px)}
+#help{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:3}
+#mission{position:fixed;top:14px;right:14px;z-index:3;max-width:310px}
+#start{position:fixed;inset:0;display:grid;place-items:center;background:radial-gradient(circle at center,#26334a 0,#111 65%);z-index:10}
+.panel{width:min(560px,90vw);padding:34px;border-radius:18px;background:rgba(12,15,22,.94);border:1px solid #444;box-shadow:0 20px 80px #000}
+h1{margin:0 0 8px;font-size:44px}.sub{color:#aaa;line-height:1.5}
+button{border:0;border-radius:10px;padding:13px 20px;background:#fff;color:#111;font-weight:700;cursor:pointer;margin-top:15px}
+#gameover{display:none;position:fixed;inset:0;z-index:9;place-items:center;background:rgba(0,0,0,.7)}
+.bad{color:#ff6b6b}.good{color:#70e39b}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="hud">
+  <div class="card">💵 $<span id="money">0</span></div>
+  <div class="card">⭐ Wanted: <span id="wanted">0</span>/5</div>
+  <div class="card">🚗 <span id="carName">Street Coupe</span></div>
+  <div class="card">❤️ <span id="health">100</span></div>
+</div>
+<div id="mission" class="card">🎯 <b>Mission:</b><br><span id="missionText">Reach the green marker.</span></div>
+<div id="help" class="card">WASD / Arrow Keys = drive · Space = handbrake · R = reset</div>
+
+<div id="start">
+  <div class="panel">
+    <h1>City Drive</h1>
+    <div class="sub">An original open-city driving prototype inspired by open-world crime games. Explore the city, dodge traffic, complete missions and escape the police.</div>
+    <button id="play">PLAY</button>
+  </div>
+</div>
+
+<div id="gameover">
+  <div class="panel">
+    <h1>Car Wrecked</h1>
+    <div class="sub">Your ride needs a reset.</div>
+    <button id="again">RESET CITY</button>
+  </div>
+</div>
+
+<script>
+const canvas=document.getElementById('game'),ctx=canvas.getContext('2d');
+let W,H,dpr,started=false;
+function resize(){dpr=devicePixelRatio||1;W=innerWidth;H=innerHeight;canvas.width=W*dpr;canvas.height=H*dpr;ctx.setTransform(dpr,0,0,dpr,0,0)}
+addEventListener('resize',resize);resize();
+
+const world={w:3600,h:3600};
+const keys={};
+addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true;if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase()))e.preventDefault();if(e.key.toLowerCase()==='r')reset()});
+addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+
+const player={x:1800,y:1800,a:0,s:0,health:100,money:0,wanted:0};
+const traffic=[];
+const cops=[];
+const buildings=[];
+const roads=[];
+
+function rand(a,b){return a+Math.random()*(b-a)}
+function road(x,y,w,h){roads.push({x,y,w,h})}
+for(let x=300;x<world.w;x+=600)road(x-55,0,110,world.h);
+for(let y=300;y<world.h;y+=600)road(0,y-55,world.w,110);
+
+for(let x=40;x<world.w;x+=600)for(let y=40;y<world.h;y+=600){
+  buildings.push({x:x+90,y:y+90,w:360,h:360});
+  buildings.push({x:x+470,y:y+470,w:80,h:80});
+}
+function isRoad(x,y){return roads.some(r=>x>r.x&&x<r.x+r.w&&y>r.y&&y<r.y+r.h)}
+function spawnTraffic(){
+  const vertical=Math.random()<.5;
+  if(vertical){let x=Math.round((rand(0,5))*600);x=Math.max(245,Math.min(3355,x));traffic.push({x,y:rand(0,world.h),a:Math.random()<.5?Math.PI/2:-Math.PI/2,s:rand(1.1,2.2),type:Math.random()})}
+  else{let y=Math.round((rand(0,5))*600);y=Math.max(245,Math.min(3355,y));traffic.push({x:rand(0,world.w),y,a:Math.random()<.5?0:Math.PI,s:rand(1.1,2.2),type:Math.random()})}
+}
+for(let i=0;i<28;i++)spawnTraffic();
+
+let target={x:rand(400,3200),y:rand(400,3200)};
+function newMission(){
+ target={x:rand(300,3300),y:rand(300,3300)};
+ document.getElementById('missionText').textContent='Reach the green marker. Bonus: $500';
+}
+newMission();
+
+function reset(){
+ player.x=1800;player.y=1800;player.a=0;player.s=0;player.health=100;player.wanted=0;
+ cops.length=0;player.money=0;newMission();
+ document.getElementById('gameover').style.display='none';
+}
+document.getElementById('play').onclick=()=>{started=true;document.getElementById('start').style.display='none';requestAnimationFrame(loop)};
+document.getElementById('again').onclick=reset;
+
+function blocked(x,y){
+ return buildings.some(b=>x>b.x-12&&x<b.x+b.w+12&&y>b.y-12&&y<b.y+b.h+12);
+}
+function moveCar(o,dt){
+ o.x+=Math.cos(o.a)*o.s*dt*60;
+ o.y+=Math.sin(o.a)*o.s*dt*60;
+ o.x=Math.max(25,Math.min(world.w-25,o.x));o.y=Math.max(25,Math.min(world.h-25,o.y));
+}
+function update(dt){
+ let accel=0;
+ if(keys.w||keys.arrowup)accel=.12;
+ if(keys.s||keys.arrowdown)accel=-.09;
+ player.s+=accel*dt*60;
+ if(!accel)player.s*=Math.pow(.92,dt*60);
+ player.s=Math.max(-2.2,Math.min(5.2,player.s));
+ const steer=(keys.a||keys.arrowleft?-1:0)+(keys.d||keys.arrowright?1:0);
+ player.a+=steer*.045*dt*60*(Math.abs(player.s)/4+.25);
+ const nx=player.x+Math.cos(player.a)*player.s*dt*60,ny=player.y+Math.sin(player.a)*player.s*dt*60;
+ if(!blocked(nx,ny)){player.x=nx;player.y=ny}else{player.s*=-.35;player.health-=10}
+ if(keys[' '])player.s*=Math.pow(.78,dt*60);
+
+ traffic.forEach(t=>{moveCar(t,dt);if(t.x<0||t.x>world.w||t.y<0||t.y>world.h){Object.assign(t,{x:rand(0,world.w),y:rand(0,world.h)})}});
+ for(const t of traffic){
+   const dx=t.x-player.x,dy=t.y-player.y;
+   if(dx*dx+dy*dy<900){player.health-=.08;player.wanted=Math.min(5,player.wanted+.002)}
+ }
+ if(player.wanted>0){
+   if(Math.random()<dt*.18) cops.push({x:player.x+rand(-500,500),y:player.y+rand(-500,500),a:0,s:2.5});
+   player.wanted=Math.max(0,player.wanted-dt*.025);
+ }
+ for(let i=cops.length-1;i>=0;i--){
+   const c=cops[i];c.a=Math.atan2(player.y-c.y,player.x-c.x);c.s=2.4+player.wanted*.25;moveCar(c,dt);
+   const dx=c.x-player.x,dy=c.y-player.y;
+   if(dx*dx+dy*dy<1000){player.health-=.5;player.wanted=Math.min(5,player.wanted+.03)}
+   if(dx*dx+dy*dy>1000000)cops.splice(i,1);
+ }
+ if(Math.hypot(target.x-player.x,target.y-player.y)<70){player.money+=500;player.wanted=Math.min(5,player.wanted+1);newMission()}
+ if(player.health<=0){player.health=0;document.getElementById('gameover').style.display='grid'}
+ document.getElementById('money').textContent=Math.floor(player.money);
+ document.getElementById('wanted').textContent=Math.ceil(player.wanted);
+ document.getElementById('health').textContent=Math.ceil(player.health);
+}
+
+function drawCar(x,y,a,kind,police=false,scale=1){
+ ctx.save();ctx.translate(x,y);ctx.rotate(a);
+ ctx.fillStyle=police?'#d9d9d9':kind<.33?'#d84b4b':kind<.66?'#3d77d8':'#e0a82f';
+ ctx.fillRect(-22*scale,-11*scale,44*scale,22*scale);
+ ctx.fillStyle='#15191f';ctx.fillRect(-10*scale,-8*scale,20*scale,16*scale);
+ ctx.fillStyle='#111';ctx.fillRect(-15*scale,-14*scale,9*scale,5*scale);ctx.fillRect(6*scale,-14*scale,9*scale,5*scale);ctx.fillRect(-15*scale,9*scale,9*scale,5*scale);ctx.fillRect(6*scale,9*scale,9*scale,5*scale);
+ if(police){ctx.fillStyle='#4d7cff';ctx.fillRect(-4,-13,8,4)}
+ ctx.restore();
+}
+
+function draw(){
+ ctx.clearRect(0,0,W,H);
+ const zoom=1,camX=player.x-W/2,camY=player.y-H/2;
+ ctx.save();ctx.translate(-camX,-camY);
+ ctx.fillStyle='#38583c';ctx.fillRect(0,0,world.w,world.h);
+ // roads
+ ctx.fillStyle='#383b3e';roads.forEach(r=>ctx.fillRect(r.x,r.y,r.w,r.h));
+ ctx.strokeStyle='rgba(255,255,255,.16)';ctx.lineWidth=2;ctx.setLineDash([18,20]);
+ roads.forEach(r=>{if(r.w<r.h){ctx.beginPath();ctx.moveTo(r.x+r.w/2,0);ctx.lineTo(r.x+r.w/2,world.h);ctx.stroke()}else{ctx.beginPath();ctx.moveTo(0,r.y+r.h/2);ctx.lineTo(world.w,r.y+r.h/2);ctx.stroke()}});
+ ctx.setLineDash([]);
+ buildings.forEach(b=>{ctx.fillStyle='#6c7074';ctx.fillRect(b.x,b.y,b.w,b.h);ctx.fillStyle='#50545a';ctx.fillRect(b.x+12,b.y+12,b.w-24,b.h-24)});
+ // marker
+ ctx.beginPath();ctx.arc(target.x,target.y,35+Math.sin(performance.now()/180)*5,0,Math.PI*2);ctx.fillStyle='rgba(70,255,130,.25)';ctx.fill();ctx.strokeStyle='#65ff9a';ctx.lineWidth=4;ctx.stroke();
+ traffic.forEach(t=>drawCar(t.x,t.y,t.a,t.type,false,.9));
+ cops.forEach(c=>drawCar(c.x,c.y,c.a,0,true,.95));
+ drawCar(player.x,player.y,player.a,.25,false,1.1);
+ ctx.restore();
+
+ // minimap
+ const mw=170,mh=170,mx=W-mw-16,my=H-mh-16;
+ ctx.fillStyle='rgba(0,0,0,.72)';ctx.fillRect(mx,my,mw,mh);
+ const sx=mw/world.w,sy=mh/world.h;
+ ctx.fillStyle='#555';roads.forEach(r=>ctx.fillRect(mx+r.x*sx,my+r.y*sy,Math.max(2,r.w*sx),Math.max(2,r.h*sy)));
+ ctx.fillStyle='#65ff9a';ctx.beginPath();ctx.arc(mx+target.x*sx,my+target.y*sy,4,0,7);ctx.fill();
+ ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(mx+player.x*sx,my+player.y*sy,4,0,7);ctx.fill();
+}
+let last=performance.now();
+function loop(now){const dt=Math.min(.033,(now-last)/1000);last=now;update(dt);draw();requestAnimationFrame(loop)}
+</script>
+</body>
+</html>
